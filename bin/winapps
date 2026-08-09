@@ -54,6 +54,7 @@ AUTOPAUSE="off"
 AUTOPAUSE_TIME="300"
 DEBUG="true"
 BOOT_TIMEOUT=120
+PORT_TIMEOUT=5
 HIDEF="on"
 RDP_FLATPAK=0
 RDP_FLAGS_WINDOWS=""
@@ -764,6 +765,32 @@ function waCheckPortOpen() {
     timeout 10 nc -z "$RDP_IP" "$RDP_PORT" &>/dev/null || waThrowExit "$EC_BAD_PORT"
 }
 
+# Name: 'waSelectPodmanRoute'
+# Role: Determine how FreeRDP can reach the RDP port of the Windows container.
+# Note: Depending on the podman version and network backend, the RDP port is
+#       reachable at the container IP from within the rootless network namespace
+#       (netavark bridge networking), at localhost from within the rootless
+#       network namespace (slirp4netns port forwarding), or at localhost from
+#       the host network namespace (rootlessport/pasta port publishing).
+#       Probe these routes in order and use the first one that works, modifying
+#       'RDP_IP' and 'FREERDP_COMMAND' accordingly.
+function waSelectPodmanRoute() {
+    local CONTAINER_IP=""
+    CONTAINER_IP=$(podman inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME" 2>/dev/null)
+
+    if [ -n "$CONTAINER_IP" ] && timeout "$PORT_TIMEOUT" podman unshare --rootless-netns nc -z "$CONTAINER_IP" "$RDP_PORT" &>/dev/null; then
+        dprint "RDP PORT REACHABLE AT CONTAINER IP '${CONTAINER_IP}' WITHIN ROOTLESS NETWORK NAMESPACE."
+        RDP_IP="$CONTAINER_IP"
+        FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
+    elif timeout "$PORT_TIMEOUT" podman unshare --rootless-netns nc -z "$RDP_IP" "$RDP_PORT" &>/dev/null; then
+        dprint "RDP PORT REACHABLE AT '${RDP_IP}' WITHIN ROOTLESS NETWORK NAMESPACE."
+        FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
+    else
+        dprint "RDP PORT UNREACHABLE WITHIN ROOTLESS NETWORK NAMESPACE. CONNECTING FROM HOST NETWORK NAMESPACE."
+        waCheckPortOpen
+    fi
+}
+
 # Name: 'waRunCommand'
 # Role: Run the requested WinApps command.
 function waRunCommand() {
@@ -1009,11 +1036,6 @@ if [[ ! -z "$RDP_ASKPASS" ]]; then
     unset RDP_PASSWORD_ARG
 fi
 
-# If using podman backend, modify the FreeRDP command to enter a new namespace.
-if [ "$WAFLAVOR" = "podman" ]; then
-    FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
-fi
-
 if [ "$WAFLAVOR" = "docker" ] || [ "$WAFLAVOR" = "podman" ]; then
     RDP_IP="$DOCKER_IP"
     waCheckContainerRunning
@@ -1026,7 +1048,11 @@ else
     waThrowExit "$EC_INVALID_FLAVOR"
 fi
 
-waCheckPortOpen
+if [ "$WAFLAVOR" = "podman" ]; then
+    waSelectPodmanRoute
+else
+    waCheckPortOpen
+fi
 waTimeSync
 waRunCommand "$@"
 
