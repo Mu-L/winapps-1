@@ -33,6 +33,7 @@ services:
       # - 3389:3389/udp
     cap_add:
       - NET_ADMIN  # Add network permission
+      - NET_RAW    # Required by dnsmasq for dockur's NAT networking; without it the container falls back to user-mode (passt) networking, which breaks RDP port forwarding from the host
     stop_grace_period: 120s # Wait 120 seconds before sending SIGTERM when attempting to shut down the Windows VM.
     restart: on-failure # Restart the Windows VM if the exit code indicates an error.
     volumes:
