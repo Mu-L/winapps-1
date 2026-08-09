@@ -1099,6 +1099,32 @@ function waCheckPortOpen() {
     echo -e "${DONE_TEXT}Done!${CLEAR_TEXT}"
 }
 
+# Name: 'waSelectPodmanRoute'
+# Role: Determine how FreeRDP can reach the RDP port of the Windows container.
+# Note: Depending on the podman version and network backend, the RDP port is
+#       reachable at the container IP from within the rootless network namespace
+#       (netavark bridge networking), at localhost from within the rootless
+#       network namespace (slirp4netns port forwarding), or at localhost from
+#       the host network namespace (rootlessport/pasta port publishing).
+#       Probe these routes in order and use the first one that works, modifying
+#       'RDP_IP' and 'FREERDP_COMMAND' accordingly.
+function waSelectPodmanRoute() {
+    local CONTAINER_IP=""
+    CONTAINER_IP=$(podman inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "WinApps" 2>/dev/null)
+
+    if [ -n "$CONTAINER_IP" ] && timeout "$PORT_TIMEOUT" podman unshare --rootless-netns nc -z "$CONTAINER_IP" "$RDP_PORT" &>/dev/null; then
+        echo -e "RDP port reachable at container IP '${CONTAINER_IP}' within the rootless network namespace."
+        RDP_IP="$CONTAINER_IP"
+        FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
+    elif timeout "$PORT_TIMEOUT" podman unshare --rootless-netns nc -z "$RDP_IP" "$RDP_PORT" &>/dev/null; then
+        echo -e "RDP port reachable at '${RDP_IP}' within the rootless network namespace."
+        FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
+    else
+        echo -e "RDP port unreachable within the rootless network namespace. Connecting from the host network namespace."
+        waCheckPortOpen
+    fi
+}
+
 # Name: 'waCheckRDPAccess'
 # Role: Tests if Windows is accessible via RDP.
 function waCheckRDPAccess() {
@@ -1710,11 +1736,6 @@ function waInstall() {
         RDP_IP="$DOCKER_IP"
     fi
 
-    # If using podman backend, modify the FreeRDP command to enter a new namespace.
-    if [ "$WAFLAVOR" = "podman" ]; then
-        FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
-    fi
-
     if [ "$WAFLAVOR" = "docker" ] || [ "$WAFLAVOR" = "podman" ]; then
         # Check if Windows is powered on.
         waCheckContainerRunning
@@ -1742,8 +1763,13 @@ function waInstall() {
         return "$EC_INVALID_FLAVOR"
     fi
 
-    # Check if the RDP port on Windows is open.
-    waCheckPortOpen
+    # Determine how FreeRDP can reach the RDP port of the Windows container.
+    if [ "$WAFLAVOR" = "podman" ]; then
+        waSelectPodmanRoute
+    else
+        # Check if the RDP port on Windows is open.
+        waCheckPortOpen
+    fi
 
     # Test RDP access to Windows.
     waCheckRDPAccess
@@ -1907,11 +1933,6 @@ function waAddApps() {
         RDP_IP="$DOCKER_IP"
     fi
 
-    # If using podman backend, modify the FreeRDP command to enter a new namespace.
-    if [ "$WAFLAVOR" = "podman" ]; then
-        FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
-    fi
-
     if [ "$WAFLAVOR" = "docker" ] || [ "$WAFLAVOR" = "podman" ]; then
         # Check if Windows is powered on.
         waCheckContainerRunning
@@ -1939,8 +1960,13 @@ function waAddApps() {
         return "$EC_INVALID_FLAVOR"
     fi
 
-    # Check if the RDP port on Windows is open.
-    waCheckPortOpen
+    # Determine how FreeRDP can reach the RDP port of the Windows container.
+    if [ "$WAFLAVOR" = "podman" ]; then
+        waSelectPodmanRoute
+    else
+        # Check if the RDP port on Windows is open.
+        waCheckPortOpen
+    fi
 
     # Test RDP access to Windows.
     waCheckRDPAccess
