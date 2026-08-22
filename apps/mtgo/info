@@ -1,0 +1,14 @@
+# GNOME shortcut name
+NAME="MTGO"
+
+# Used for descriptions and window class
+FULL_NAME="Magic the Gathering Online"
+
+# The executable inside windows
+WIN_EXECUTABLE="C:\Users\%USERNAME%\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Daybreak Game Company LLC\Magic The Gathering Online .appref-ms"
+
+# GNOME categories
+CATEGORIES="WinApps;Game"
+
+# GNOME mimetypes
+MIME_TYPES=""
